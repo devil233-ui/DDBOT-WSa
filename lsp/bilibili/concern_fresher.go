@@ -122,12 +122,27 @@ func (c *Concern) fresh() concern.FreshFunc {
 					if selfUid != 0 && selfUid == mid {
 						// 特殊处理下关注自己
 						selfInfo, err := c.GetUserInfo(selfUid)
-						if err != nil {
-							logger.WithField("uid", mid).WithField("name", selfInfo.Name).
-								WithField("room_id", selfInfo.RoomId).Errorf("GetRoomInfo error %v", err)
+						if err != nil || selfInfo == nil {
+							logger.WithField("uid", mid).
+								Warnf("读取自己用户信息失败，跳过自己直播刷新 %v", err)
 							continue
 						}
 						roomId := selfInfo.RoomId
+						if roomId <= 0 {
+							// 缓存里的直播间号可能缺失或为 0。若直接拿 0 查询，
+							// bilibili 会返回空数组（data: []），反序列化报错且永远无法推送；
+							// 这里单独解析自己直播间号并回填缓存，后续轮次直接命中缓存。
+							roomId, err = GetSelfLiveRoomId()
+							if err != nil {
+								logger.WithField("uid", mid).WithField("name", selfInfo.Name).
+									Warnf("解析自己直播间号失败，跳过自己直播刷新 %v", err)
+								continue
+							}
+							selfInfo.RoomId = roomId
+							if err := c.AddUserInfo(selfInfo); err != nil {
+								logger.WithField("uid", mid).Warnf("回填自己直播间号失败 %v", err)
+							}
+						}
 						resp, err := GetRoomInfo(roomId)
 						if err != nil {
 							logger.WithField("uid", mid).WithField("name", selfInfo.Name).
